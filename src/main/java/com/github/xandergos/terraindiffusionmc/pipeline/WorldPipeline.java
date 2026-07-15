@@ -525,6 +525,34 @@ public final class WorldPipeline implements AutoCloseable {
     }
 
     /**
+     * Returns river flux at coarse resolution (one value per coarse pixel).
+     * Each coarse pixel ci covers native pixels [ci*ST, ci*ST + S).
+     * Triggers coarse tile computation if needed to populate flux data.
+     * Returns null if erosion is disabled.
+     */
+    public float[] getCoarseRiverFlux(int ci0, int cj0, int ci1, int cj1) {
+        if (erosionSimulator == null) return null;
+        // Ensure coarse tiles are computed (populates riverFluxTiles)
+        coarse.getSlice(new int[]{0, ci0, cj0}, new int[]{7, ci1, cj1});
+        int H = ci1 - ci0, W = cj1 - cj0;
+        float[] result = new float[H * W];
+        boolean hasData = false;
+
+        for (int r = 0; r < H; r++) {
+            for (int c = 0; c < W; c++) {
+                int ci = ci0 + r, cj = cj0 + c;
+                long tileKey = ((long) ci << 32) | (cj & 0xFFFFFFFFL);
+                float[][] flux = riverFluxTiles.get(tileKey);
+                if (flux == null) continue;
+                hasData = true;
+                // Sample center of tile (S=64, center at pixel 32)
+                result[r * W + c] = flux[COARSE_TILE_SIZE / 2][COARSE_TILE_SIZE / 2];
+            }
+        }
+        return hasData ? result : null;
+    }
+
+    /**
      * Get elevation and climate for a bounding box.
      *
      * @return float[2]: [0] = elev (H*W flat), [1] = climate (5*H*W flat, or null)

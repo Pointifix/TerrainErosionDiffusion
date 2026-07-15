@@ -198,30 +198,30 @@ public final class HydraulicErosionSimulator {
      * Builder for configuring erosion parameters.
      */
     public static final class Builder {
-        private float inertia = 0.05f;
+        private float inertia = 0.02f;
         private float capacityCoef = 4.0f;
         private float depositionRate = 0.1f;
-        private float erosionRate = 0.1f;
+        private float erosionRate = 0.5f;
         private float evaporationRate = 0.02f;
-        private float gravity = 4.0f;
-        private int numDroplets = 50000;
-        private int maxLifetime = 30;
+        private float gravity = 8.0f;
+        private int numDroplets = 200000;
+        private int maxLifetime = 64;
 
-        /** Droplet inertia (0-1). Higher = more momentum, less affected by slope. Default: 0.05 */
+        /** Droplet inertia (0-1). Higher = more momentum, less affected by slope. Default: 0.02 */
         public Builder inertia(float v) { this.inertia = v; return this; }
         /** Sediment capacity coefficient. Higher = rivers carry more sediment. Default: 4.0 */
         public Builder capacityCoef(float v) { this.capacityCoef = v; return this; }
         /** Deposition rate when carrying excess sediment. Default: 0.1 */
         public Builder depositionRate(float v) { this.depositionRate = v; return this; }
-        /** Erosion rate when below capacity. Default: 0.1 */
+        /** Erosion rate when below capacity. Default: 0.5 */
         public Builder erosionRate(float v) { this.erosionRate = v; return this; }
         /** Water evaporation per step (0-1). Default: 0.02 */
         public Builder evaporationRate(float v) { this.evaporationRate = v; return this; }
-        /** Gravity acceleration. Higher = faster downhill flow. Default: 4.0 */
+        /** Gravity acceleration. Higher = faster downhill flow. Default: 8.0 */
         public Builder gravity(float v) { this.gravity = v; return this; }
-        /** Number of rain droplets to simulate. Default: 50000 */
+        /** Number of rain droplets to simulate. Default: 200000 */
         public Builder numDroplets(int v) { this.numDroplets = v; return this; }
-        /** Max steps per droplet lifetime. Default: 30 */
+        /** Max steps per droplet lifetime. Default: 64 */
         public Builder maxLifetime(int v) { this.maxLifetime = v; return this; }
 
         public HydraulicErosionSimulator build() {

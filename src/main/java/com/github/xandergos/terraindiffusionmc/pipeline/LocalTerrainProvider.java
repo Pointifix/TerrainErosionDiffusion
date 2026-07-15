@@ -157,6 +157,15 @@ public final class LocalTerrainProvider {
     }
 
     /**
+     * Fetch river flux at coarse resolution on the inference thread.
+     * Returns null if erosion is disabled. Each value represents cumulative water
+     * flow at the center of a coarse tile.
+     */
+    public static float[] getPipelineCoarseFlux(int ci0, int cj0, int ci1, int cj1) throws Exception {
+        return submitToInferenceThread(() -> getInstance().pipeline.getCoarseRiverFlux(ci0, cj0, ci1, cj1));
+    }
+
+    /**
      * Change the world seed used by the pipeline and clear all caches.
      * Note: this also affects terrain generation for new Minecraft chunks.
      */

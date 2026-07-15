@@ -69,6 +69,7 @@ public final class ExplorerServer {
         server.createContext("/api/coarse.png", ExplorerServer::handleCoarsePng);
         server.createContext("/api/coarse_data.json", ExplorerServer::handleCoarseData);
         server.createContext("/api/coarse_stats", ExplorerServer::handleCoarseStats);
+        server.createContext("/api/river_flux.png", ExplorerServer::handleRiverFluxPng);
         server.createContext("/api/detail.png", ExplorerServer::handleDetailPng);
         server.createContext("/api/detail_raw", ExplorerServer::handleDetailRaw);
         // Single-thread executor matches Python's threaded=False
@@ -292,6 +293,57 @@ public final class ExplorerServer {
             sendJson(ex, 200, stats);
         } catch (Exception e) {
             sendError(ex, 400, e.getMessage());
+        }
+    }
+
+    /**
+     * GET /api/river_flux.png — visualizes cumulative water flow at coarse resolution.
+     * Query params: ci0, ci1, cj0, cj1
+     * Uses log1p scaling for better dynamic range, viridis colormap.
+     * Returns 404 if erosion is disabled.
+     */
+    private static void handleRiverFluxPng(HttpExchange ex) throws IOException {
+        if (!ex.getRequestMethod().equalsIgnoreCase("GET")) { send405(ex); return; }
+        try {
+            Map<String, String> q = parseQuery(ex.getRequestURI());
+            int ci0 = getInt(q, "ci0", -50), ci1 = getInt(q, "ci1", 50);
+            int cj0 = getInt(q, "cj0", -50), cj1 = getInt(q, "cj1", 50);
+            int H = ci1 - ci0, W = cj1 - cj0;
+
+            float[] flux = LocalTerrainProvider.getPipelineCoarseFlux(ci0, cj0, ci1, cj1);
+            if (flux == null) {
+                sendError(ex, 404, "Erosion disabled or no flux data");
+                return;
+            }
+
+            // log1p scaling for better dynamic range
+            float[] display = new float[H * W];
+            for (int i = 0; i < H * W; i++)
+                display[i] = (float) Math.log1p(Math.max(0f, flux[i]));
+
+            float vmin = nanMin(display), vmax = nanMax(display);
+            if (vmax == vmin) vmax = vmin + 1f;
+
+            // Viridis colormap
+            float[][] rgba = new float[4][H * W];
+            for (int i = 0; i < H * W; i++) {
+                float t = (display[i] - vmin) / (vmax - vmin);
+                float[] rgb = Colormaps.viridis(clamp01(t));
+                rgba[0][i] = rgb[0]; rgba[1][i] = rgb[1]; rgba[2][i] = rgb[2]; rgba[3][i] = 1f;
+            }
+
+            byte[] png = toPng(rgba, H, W);
+            ex.getResponseHeaders().set("Content-Type", "image/png");
+            ex.getResponseHeaders().set("X-Vmin", String.format("%.3f", vmin));
+            ex.getResponseHeaders().set("X-Vmax", String.format("%.3f", vmax));
+            ex.getResponseHeaders().set("Access-Control-Expose-Headers", "X-Vmin, X-Vmax");
+            ex.sendResponseHeaders(200, png.length);
+            ex.getResponseBody().write(png);
+        } catch (Exception e) {
+            LOG.error("river_flux.png error", e);
+            sendError(ex, 400, e.getMessage());
+        } finally {
+            ex.close();
         }
     }
 
