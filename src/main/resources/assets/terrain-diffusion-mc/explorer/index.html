@@ -620,6 +620,7 @@
     { ch: 4, name: 'Precip',  unit: '',   step: 10,   defMin: 0,     defMax: 2000 },
     { ch: 5, name: 'P CV',    unit: '',   step: 1,    defMin: 0,     defMax: 200  },
   ];
+  const CHANNEL_FLUX = -1;
 
   const state = {
     seed: null,
@@ -806,6 +807,9 @@
     const { seed, channel, coarseOffsetI, coarseOffsetJ, coarseWindow } = state;
     const ci0 = coarseOffsetI - coarseWindow, ci1 = coarseOffsetI + coarseWindow;
     const cj0 = coarseOffsetJ - coarseWindow, cj1 = coarseOffsetJ + coarseWindow;
+    if (channel === CHANNEL_FLUX) {
+      return `/api/river_flux.png?ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`;
+    }
     let url = `/api/coarse.png?channel=${channel}&ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`;
     if (filterEnable.checked) {
       CHANNEL_META.forEach(({ ch }) => {
@@ -875,9 +879,11 @@
     coarseImg.classList.remove('loading');
     coarseSpinner.classList.remove('active');
     const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w } = state;
-    coarseInfo.textContent = `ci=[${oi-w}…${oi+w}], cj=[${oj-w}…${oj+w}]`;
+    coarseInfo.textContent = state.channel === CHANNEL_FLUX
+      ? `Flux ci=[${oi-w}…${oi+w}], cj=[${oj-w}…${oj+w}]`
+      : `ci=[${oi-w}…${oi+w}], cj=[${oj-w}…${oj+w}]`;
     updateTileMarker();
-    loadCoarseData();
+    if (state.channel !== CHANNEL_FLUX) loadCoarseData();
   };
   coarseImg.onerror = () => {
     coarseImg.classList.remove('loading');
@@ -923,6 +929,7 @@
 
   // ── Coarse hover ──
   coarseImg.addEventListener('mousemove', (e) => {
+    if (state.channel === CHANNEL_FLUX) { hideTooltip(); return; }
     if (!state.coarseData) return;
     const { ci0, ci1, cj0, cj1, channels } = state.coarseData;
     const rect = coarseImg.getBoundingClientRect();
@@ -980,13 +987,18 @@
   // ── Channel buttons ──
   function buildChannelButtons(names) {
     channelButtons.innerHTML = '';
-    names.forEach((name, i) => {
+    const allChannels = [...names.map((name, i) => ({ name, idx: i })), { name: 'Flux', idx: CHANNEL_FLUX }];
+    allChannels.forEach(({ name, idx }) => {
       const btn = document.createElement('button');
       btn.textContent = name;
-      if (i === state.channel) btn.classList.add('active');
+      if (idx === state.channel) btn.classList.add('active');
       btn.addEventListener('click', () => {
-        state.channel = i;
-        channelButtons.querySelectorAll('button').forEach((b, j) => b.classList.toggle('active', j === i));
+        state.channel = idx;
+        channelButtons.querySelectorAll('button').forEach((b) => {
+          const isFlux = b.textContent === 'Flux';
+          const bIdx = isFlux ? CHANNEL_FLUX : names.indexOf(b.textContent);
+          b.classList.toggle('active', bIdx === idx);
+        });
         loadCoarse();
       });
       channelButtons.appendChild(btn);
