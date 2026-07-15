@@ -166,7 +166,10 @@ public final class HydraulicErosionSimulator {
                     sediment += erosionAmt;
                 }
 
-                normFlux[iy][ix] += water;
+                normFlux[iy][ix]         += water * (1 - tx) * (1 - ty);
+                normFlux[iy][newIx]      += water * tx * (1 - ty);
+                normFlux[newIy][ix]      += water * (1 - tx) * ty;
+                normFlux[newIy][newIx]   += water * tx * ty;
                 vel = (float) Math.sqrt(Math.max(0f, vel * vel - heightDiff * gravity));
                 water *= (1f - evaporationRate);
                 px = newPx;
