@@ -70,6 +70,7 @@ public final class ExplorerServer {
         server.createContext("/api/coarse_data.json", ExplorerServer::handleCoarseData);
         server.createContext("/api/coarse_stats", ExplorerServer::handleCoarseStats);
         server.createContext("/api/river_flux.png", ExplorerServer::handleRiverFluxPng);
+        server.createContext("/api/flux_data.json", ExplorerServer::handleFluxData);
         server.createContext("/api/detail.png", ExplorerServer::handleDetailPng);
         server.createContext("/api/detail_raw", ExplorerServer::handleDetailRaw);
         // Single-thread executor matches Python's threaded=False
@@ -309,6 +310,11 @@ public final class ExplorerServer {
             int ci0 = getInt(q, "ci0", -50), ci1 = getInt(q, "ci1", 50);
             int cj0 = getInt(q, "cj0", -50), cj1 = getInt(q, "cj1", 50);
             int H = ci1 - ci0, W = cj1 - cj0;
+            Float fluxMinRaw = getFloat(q, "flux_min");
+            Float fluxMaxRaw = getFloat(q, "flux_max");
+            float fluxMin = fluxMinRaw != null ? fluxMinRaw : Float.NaN;
+            float fluxMax = fluxMaxRaw != null ? fluxMaxRaw : Float.NaN;
+            boolean hasFilter = !Float.isNaN(fluxMin) || !Float.isNaN(fluxMax);
 
             float[] flux = LocalTerrainProvider.getPipelineCoarseFlux(ci0, cj0, ci1, cj1);
             if (flux == null) {
@@ -324,12 +330,18 @@ public final class ExplorerServer {
             float vmin = nanMin(display), vmax = nanMax(display);
             if (vmax == vmin) vmax = vmin + 1f;
 
-            // Viridis colormap
+            // Viridis colormap with optional filter dimming
+            float dimAlpha = 0.25f;
             float[][] rgba = new float[4][H * W];
             for (int i = 0; i < H * W; i++) {
                 float t = (display[i] - vmin) / (vmax - vmin);
                 float[] rgb = Colormaps.viridis(clamp01(t));
-                rgba[0][i] = rgb[0]; rgba[1][i] = rgb[1]; rgba[2][i] = rgb[2]; rgba[3][i] = 1f;
+                boolean pass = true;
+                if (hasFilter) {
+                    if (!Float.isNaN(fluxMin) && flux[i] < fluxMin) pass = false;
+                    if (!Float.isNaN(fluxMax) && flux[i] > fluxMax) pass = false;
+                }
+                rgba[0][i] = rgb[0]; rgba[1][i] = rgb[1]; rgba[2][i] = rgb[2]; rgba[3][i] = pass ? 1f : dimAlpha;
             }
 
             byte[] png = toPng(rgba, H, W);
@@ -344,6 +356,34 @@ public final class ExplorerServer {
             sendError(ex, 400, e.getMessage());
         } finally {
             ex.close();
+        }
+    }
+
+    /**
+     * GET /api/flux_data.json — returns raw flux values as a 2D grid for tooltip hover.
+     * Query params: ci0, ci1, cj0, cj1
+     */
+    private static void handleFluxData(HttpExchange ex) throws IOException {
+        if (!ex.getRequestMethod().equalsIgnoreCase("GET")) { send405(ex); return; }
+        try {
+            Map<String, String> q = parseQuery(ex.getRequestURI());
+            int ci0 = getInt(q, "ci0", -50), ci1 = getInt(q, "ci1", 50);
+            int cj0 = getInt(q, "cj0", -50), cj1 = getInt(q, "cj1", 50);
+            int H = ci1 - ci0, W = cj1 - cj0;
+
+            float[] flux = LocalTerrainProvider.getPipelineCoarseFlux(ci0, cj0, ci1, cj1);
+            if (flux == null) {
+                sendError(ex, 404, "Erosion disabled or no flux data");
+                return;
+            }
+
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("ci0", ci0); resp.put("ci1", ci1);
+            resp.put("cj0", cj0); resp.put("cj1", cj1);
+            resp.put("flux", roundedGrid(flux, H, W, 1));
+            sendJson(ex, 200, resp);
+        } catch (Exception e) {
+            sendError(ex, 400, e.getMessage());
         }
     }
 

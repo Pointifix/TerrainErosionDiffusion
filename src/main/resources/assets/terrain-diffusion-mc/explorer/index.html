@@ -621,6 +621,7 @@
     { ch: 5, name: 'P CV',    unit: '',   step: 1,    defMin: 0,     defMax: 200  },
   ];
   const CHANNEL_FLUX = -1;
+  const FLUX_META = { ch: CHANNEL_FLUX, name: 'Flux', unit: '', step: 1, defMin: 0, defMax: 100 };
 
   const state = {
     seed: null,
@@ -632,6 +633,7 @@
     coarseOffsetJ: 0,
     coarseWindow: 50,
     coarseData: null,
+    fluxData: null,
     detailRaw: null,
     detailCI: null,
     detailCJ: null,
@@ -672,7 +674,7 @@
   }
 
   // ── Build filter channel widgets ──
-  CHANNEL_META.forEach(({ ch, name, unit, step, defMin, defMax }) => {
+  [...CHANNEL_META, FLUX_META].forEach(({ ch, name, unit, step, defMin, defMax }) => {
     const div = document.createElement('div');
     div.className = 'fch';
     div.id = `fch-${ch}`;
@@ -808,7 +810,15 @@
     const ci0 = coarseOffsetI - coarseWindow, ci1 = coarseOffsetI + coarseWindow;
     const cj0 = coarseOffsetJ - coarseWindow, cj1 = coarseOffsetJ + coarseWindow;
     if (channel === CHANNEL_FLUX) {
-      return `/api/river_flux.png?ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`;
+      let url = `/api/river_flux.png?ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`;
+      if (filterEnable.checked) {
+        const minEl = document.getElementById(`fch-${CHANNEL_FLUX}-min`);
+        const maxEl = document.getElementById(`fch-${CHANNEL_FLUX}-max`);
+        const lo = parseFloat(minEl.value), hi = parseFloat(maxEl.value);
+        if (lo > parseFloat(minEl.min)) url += `&flux_min=${lo}`;
+        if (hi < parseFloat(maxEl.max)) url += `&flux_max=${hi}`;
+      }
+      return url;
     }
     let url = `/api/coarse.png?channel=${channel}&ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`;
     if (filterEnable.checked) {
@@ -838,11 +848,18 @@
   }
 
   async function loadCoarseData() {
-    const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w, seed } = state;
+    const { coarseOffsetI: oi, coarseOffsetJ: oj, coarseWindow: w, seed, channel } = state;
     const ci0 = oi - w, ci1 = oi + w, cj0 = oj - w, cj1 = oj + w;
     try {
-      const res = await fetch(`/api/coarse_data.json?ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`);
-      state.coarseData = await res.json();
+      if (channel === CHANNEL_FLUX) {
+        const res = await fetch(`/api/flux_data.json?ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`);
+        state.fluxData = await res.json();
+        state.coarseData = null;
+      } else {
+        const res = await fetch(`/api/coarse_data.json?ci0=${ci0}&ci1=${ci1}&cj0=${cj0}&cj1=${cj1}&_s=${seed}`);
+        state.coarseData = await res.json();
+        state.fluxData = null;
+      }
     } catch (_) {}
   }
 
@@ -883,7 +900,7 @@
       ? `Flux ci=[${oi-w}…${oi+w}], cj=[${oj-w}…${oj+w}]`
       : `ci=[${oi-w}…${oi+w}], cj=[${oj-w}…${oj+w}]`;
     updateTileMarker();
-    if (state.channel !== CHANNEL_FLUX) loadCoarseData();
+    loadCoarseData();
   };
   coarseImg.onerror = () => {
     coarseImg.classList.remove('loading');
@@ -929,10 +946,21 @@
 
   // ── Coarse hover ──
   coarseImg.addEventListener('mousemove', (e) => {
-    if (state.channel === CHANNEL_FLUX) { hideTooltip(); return; }
+    const rect = coarseImg.getBoundingClientRect();
+    if (state.channel === CHANNEL_FLUX) {
+      if (!state.fluxData) return;
+      const { ci0, ci1, cj0, cj1, flux } = state.fluxData;
+      const ci = Math.floor(ci0 + (e.clientY - rect.top)  / rect.height * (ci1 - ci0));
+      const cj = Math.floor(cj0 + (e.clientX - rect.left) / rect.width  * (cj1 - cj0));
+      const row = ci - ci0, col = cj - cj0;
+      if (row < 0 || row >= ci1 - ci0 || col < 0 || col >= cj1 - cj0) return;
+      let html = `<div class="ht-coord">ci=${ci}, cj=${cj}</div>`;
+      html += `<div class="ht-row"><span class="ht-label">Flux</span><span class="ht-val">${flux[row][col].toFixed(1)}</span></div>`;
+      showTooltip(e, html);
+      return;
+    }
     if (!state.coarseData) return;
     const { ci0, ci1, cj0, cj1, channels } = state.coarseData;
-    const rect = coarseImg.getBoundingClientRect();
     const ci = Math.floor(ci0 + (e.clientY - rect.top)  / rect.height * (ci1 - ci0));
     const cj = Math.floor(cj0 + (e.clientX - rect.left) / rect.width  * (cj1 - cj0));
     const row = ci - ci0, col = cj - cj0;
