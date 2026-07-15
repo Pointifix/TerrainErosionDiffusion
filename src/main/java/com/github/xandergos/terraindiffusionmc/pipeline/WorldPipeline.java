@@ -532,21 +532,37 @@ public final class WorldPipeline implements AutoCloseable {
      */
     public float[] getCoarseRiverFlux(int ci0, int cj0, int ci1, int cj1) {
         if (erosionSimulator == null) return null;
+        int ST = COARSE_TILE_STRIDE, S = COARSE_TILE_SIZE;
         // Ensure coarse tiles are computed (populates riverFluxTiles)
         coarse.getSlice(new int[]{0, ci0, cj0}, new int[]{7, ci1, cj1});
         int H = ci1 - ci0, W = cj1 - cj0;
         float[] result = new float[H * W];
         boolean hasData = false;
 
-        for (int r = 0; r < H; r++) {
-            for (int c = 0; c < W; c++) {
-                int ci = ci0 + r, cj = cj0 + c;
-                long tileKey = ((long) ci << 32) | (cj & 0xFFFFFFFFL);
+        // Tile index range covering [ci0, ci1) and [cj0, cj1)
+        int ti0 = Math.floorDiv(ci0, ST), ti1 = Math.floorDiv(ci1 - 1, ST) + 1;
+        int tj0 = Math.floorDiv(cj0, ST), tj1 = Math.floorDiv(cj1 - 1, ST) + 1;
+
+        for (int ti = ti0; ti < ti1; ti++) {
+            for (int tj = tj0; tj < tj1; tj++) {
+                long tileKey = ((long) ti << 32) | (tj & 0xFFFFFFFFL);
                 float[][] flux = riverFluxTiles.get(tileKey);
                 if (flux == null) continue;
                 hasData = true;
-                // Sample center of tile (S=64, center at pixel 32)
-                result[r * W + c] = flux[COARSE_TILE_SIZE / 2][COARSE_TILE_SIZE / 2];
+                // Pixel range of this tile: [ti*ST, ti*ST+S)
+                int pStart = ti * ST, qStart = tj * ST;
+                // Overlap with requested region
+                int rStart = Math.max(0, pStart - ci0);
+                int rEnd   = Math.min(H, pStart + S - ci0);
+                int cStart = Math.max(0, qStart - cj0);
+                int cEnd   = Math.min(W, qStart + S - cj0);
+                for (int r = rStart; r < rEnd; r++) {
+                    int pi = r + ci0 - pStart; // pixel index within tile
+                    for (int c = cStart; c < cEnd; c++) {
+                        int pj = c + cj0 - qStart;
+                        result[r * W + c] = flux[pi][pj];
+                    }
+                }
             }
         }
         return hasData ? result : null;
