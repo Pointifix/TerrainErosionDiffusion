@@ -1,5 +1,6 @@
 package com.github.xandergos.terraindiffusionmc.standalone;
 
+import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.explorer.ExplorerServer;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
 import com.github.xandergos.terraindiffusionmc.pipeline.PipelineModels;
@@ -39,6 +40,7 @@ public final class StandaloneExplorer {
         System.out.println("Device:      " + System.getProperty("terrain_diffusion.inference_device", "gpu"));
         System.out.println("Offload:     " + System.getProperty("terrain_diffusion.offload_models", "true"));
         System.out.println("Scale:       " + System.getProperty("terrain_diffusion.scale", "2"));
+        System.out.println("Erosion:     " + (TerrainDiffusionConfig.erosionEnabled() ? "enabled" : "disabled"));
         System.out.println();
 
         System.out.println("Loading ML models (this may take a minute)...");

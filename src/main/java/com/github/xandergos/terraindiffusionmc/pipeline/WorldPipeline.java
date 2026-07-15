@@ -6,6 +6,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -70,6 +72,11 @@ public final class WorldPipeline implements AutoCloseable {
     private final boolean ownModels;
     private volatile SyntheticMapFactory syntheticMapFactory;
     private volatile long seed;
+
+    /** Hydraulic erosion simulator (null = erosion disabled). */
+    private volatile HydraulicErosionSimulator erosionSimulator;
+    /** River flux per coarse tile, keyed by (row << 32 | col). */
+    private final ConcurrentHashMap<Long, float[][]> riverFluxTiles = new ConcurrentHashMap<>();
 
     private final MemoryTileStore tileStore;
     private final long cacheLimitBytes = 100L * 1024 * 1024;
@@ -199,6 +206,22 @@ public final class WorldPipeline implements AutoCloseable {
         for (int ch = 0; ch < 6; ch++)
             for (int px = 0; px < S * S; px++)
                 out[ch * S * S + px] = (sample[ch * S * S + px] / SIGMA_DATA) * MODEL_STDS[ch] + MODEL_MEANS[ch];
+
+        // Hydraulic erosion (applied to coarse elevation before latent/decoder stages)
+        HydraulicErosionSimulator erosion = this.erosionSimulator;
+        if (erosion != null) {
+            float[][] elevMap = new float[S][S];
+            for (int r = 0; r < S; r++)
+                System.arraycopy(out, r * S, elevMap[r], 0, S);
+
+            long tileSeed = this.seed ^ ((long) i1 << 32 | (j1 & 0xFFFFFFFFL));
+            HydraulicErosionSimulator.ErosionResult er = erosion.erode(elevMap, tileSeed);
+
+            for (int r = 0; r < S; r++)
+                System.arraycopy(er.erodedMap[r], 0, out, r * S, S);
+            long tileKey = ((long) i << 32) | (j & 0xFFFFFFFFL);
+            riverFluxTiles.put(tileKey, er.riverFlux);
+        }
 
         // ch1 = ch0 - ch1 (convert to p5)
         for (int px = 0; px < S * S; px++)
@@ -431,6 +454,60 @@ public final class WorldPipeline implements AutoCloseable {
     /** Returns the current world seed. */
     public long getSeed() {
         return seed;
+    }
+
+    /**
+     * Enable hydraulic erosion on coarse tiles.
+     * @param simulator erosion simulator instance, or null to disable
+     */
+    public void setErosionSimulator(HydraulicErosionSimulator simulator) {
+        this.erosionSimulator = simulator;
+    }
+
+    /**
+     * Returns river flux at native resolution for a bounding box, or null if erosion is disabled.
+     * The returned array is (H, W) row-major with flux values indicating water flow accumulation.
+     */
+    public float[] getRiverFluxForRegion(int i1, int j1, int i2, int j2) {
+        if (erosionSimulator == null) return null;
+        int H = i2 - i1, W = j2 - j1;
+        int S = COARSE_TILE_SIZE, ST = COARSE_TILE_STRIDE;
+        float[] result = new float[H * W];
+
+        // Each coarse tile ci covers native pixels [ci*ST, ci*ST + S)
+        // Find which tiles overlap the requested region
+        int ci1 = Math.floorDiv(i1, ST);
+        int cj1 = Math.floorDiv(j1, ST);
+        int ci2 = -Math.floorDiv(-i2, ST);
+        int cj2 = -Math.floorDiv(-j2, ST);
+
+        for (int ci = ci1; ci < ci2; ci++) {
+            for (int cj = cj1; cj < cj2; cj++) {
+                long tileKey = ((long) ci << 32) | (cj & 0xFFFFFFFFL);
+                float[][] flux = riverFluxTiles.get(tileKey);
+                if (flux == null) continue;
+
+                // Native pixel range covered by this tile
+                int tileNativeY0 = ci * ST;
+                int tileNativeX0 = cj * ST;
+
+                // Overlap region in native coords
+                int yStart = Math.max(i1, tileNativeY0);
+                int yEnd   = Math.min(i2, tileNativeY0 + S);
+                int xStart = Math.max(j1, tileNativeX0);
+                int xEnd   = Math.min(j2, tileNativeX0 + S);
+
+                for (int y = yStart; y < yEnd; y++) {
+                    int tileLocalY = y - tileNativeY0;
+                    for (int x = xStart; x < xEnd; x++) {
+                        int tileLocalX = x - tileNativeX0;
+                        int outIdx = (y - i1) * W + (x - j1);
+                        result[outIdx] = Math.max(result[outIdx], flux[tileLocalY][tileLocalX]);
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     /** Returns the total count of newly computed tensor windows since startup. */

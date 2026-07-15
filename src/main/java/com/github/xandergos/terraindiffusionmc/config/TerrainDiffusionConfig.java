@@ -65,6 +65,31 @@ public final class TerrainDiffusionConfig {
         return readBoolean("validate_model", DEFAULT_VALIDATE_MODEL);
     }
 
+    /** Whether hydraulic erosion is enabled on coarse tiles. */
+    public static boolean erosionEnabled() {
+        String sysProp = System.getProperty("terrain_diffusion.erosion_enabled");
+        if (sysProp != null) return Boolean.parseBoolean(sysProp.trim());
+        return readBoolean("erosion.enabled", true);
+    }
+
+    /** Number of rain droplets per erosion simulation (per coarse tile). */
+    public static int erosionNumDroplets() {
+        String sysProp = System.getProperty("terrain_diffusion.erosion_num_droplets");
+        if (sysProp != null) {
+            try { return Integer.parseInt(sysProp.trim()); } catch (NumberFormatException ignored) {}
+        }
+        return readInt("erosion.num_droplets", 50000);
+    }
+
+    /** Maximum lifetime (steps) for each erosion droplet. */
+    public static int erosionMaxLifetime() {
+        String sysProp = System.getProperty("terrain_diffusion.erosion_max_lifetime");
+        if (sysProp != null) {
+            try { return Integer.parseInt(sysProp.trim()); } catch (NumberFormatException ignored) {}
+        }
+        return readInt("erosion.max_lifetime", 30);
+    }
+
     /** Initial coarse-pixel radius for spawn land search (NxN region centered at origin). */
     public static int spawnSearchInitialSize() {
         return readInt("spawn_search.initial_size", 16);

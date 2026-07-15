@@ -1,5 +1,6 @@
 package com.github.xandergos.terraindiffusionmc.pipeline;
 
+import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 import org.slf4j.Logger;
@@ -82,6 +83,13 @@ public final class LocalTerrainProvider {
 
     private LocalTerrainProvider(long seed, PipelineModels models) {
         this.pipeline = new WorldPipeline(seed, models);
+        if (TerrainDiffusionConfig.erosionEnabled()) {
+            HydraulicErosionSimulator erosion = new HydraulicErosionSimulator.Builder()
+                    .numDroplets(TerrainDiffusionConfig.erosionNumDroplets())
+                    .maxLifetime(TerrainDiffusionConfig.erosionMaxLifetime())
+                    .build();
+            this.pipeline.setErosionSimulator(erosion);
+        }
     }
 
     /** Seed is 64-bit world seed. Creates provider once; later worlds only update seed and clear caches (lightweight). */
@@ -251,8 +259,9 @@ public final class LocalTerrainProvider {
         float[][] out = pipeline.get(i1, j1, i2, j2, true);
         float[] elevFlat = out[0];
         float[] climate  = out[1];
+        float[] riverFlux = pipeline.getRiverFluxForRegion(i1, j1, i2, j2);
 
-        short[] biomeFlat = BiomeClassifier.classify(elevFlat, climate, i1, j1, elevPadded, H, W, NATIVE_RESOLUTION);
+        short[] biomeFlat = BiomeClassifier.classify(elevFlat, climate, riverFlux, i1, j1, elevPadded, H, W, NATIVE_RESOLUTION);
         return buildHeightmapData(elevFlat, biomeFlat, H, W);
     }
 
@@ -298,7 +307,16 @@ public final class LocalTerrainProvider {
 
         float[] elevOut = addElevationNoise(elevSmooth, elevPadded, i1, j1, H, W, pixelSizeM);
 
-        short[] biomeFlat = BiomeClassifier.classify(elevSmooth, climate, i1, j1, elevPadded, H, W, pixelSizeM);
+        // Get river flux at native resolution and upsample to block resolution
+        float[] riverFluxNative = pipeline.getRiverFluxForRegion(i1n, j1n, i2n, j2n);
+        float[] riverFlux = null;
+        if (riverFluxNative != null) {
+            float[][] fluxNative2D = to2D(riverFluxNative, nH, nW);
+            float[][] fluxUp = LaplacianUtils.bilinearResize(fluxNative2D, nH * scale, nW * scale);
+            riverFlux = cropFlat(fluxUp, cropI1, cropJ1, H, W, nH * scale, nW * scale);
+        }
+
+        short[] biomeFlat = BiomeClassifier.classify(elevSmooth, climate, riverFlux, i1, j1, elevPadded, H, W, pixelSizeM);
         return buildHeightmapData(elevOut, biomeFlat, H, W);
     }
 

@@ -39,6 +39,7 @@ public final class BiomeClassifier {
     static final short GROVE = 31, SNOWY_SLOPES = 32, FROZEN_PEAKS = 33, STONY_PEAKS = 35;
     static final short WARM_OCEAN = 41, OCEAN = 44, COLD_OCEAN = 46, FROZEN_OCEAN = 48;
     static final short FOREST_SPARSE = 108, TAIGA_SPARSE = 115, SNOWY_TAIGA_SPARSE = 116;
+    static final short RIVER = 50, FROZEN_RIVER = 51;
 
     /**
      * Classify biomes for a grid of pixels.
@@ -55,6 +56,26 @@ public final class BiomeClassifier {
      */
     public static short[] classify(float[] elev, float[] climate, int i0, int j0,
                                     float[] elevPadded, int H, int W, float pixelSizeM) {
+        return classify(elev, climate, null, i0, j0, elevPadded, H, W, pixelSizeM);
+    }
+
+    /**
+     * Classify biomes for a grid of pixels with optional river flux.
+     *
+     * @param elev       elevation in meters, (H, W) row-major
+     * @param climate    climate data (5, H, W) row-major or null
+     * @param riverFlux  water flow accumulation (H, W) row-major, or null to disable river placement
+     * @param i0         top-left row in world space (for noise sampling)
+     * @param j0         top-left col in world space
+     * @param elevPadded elevation with 1-pixel padding, (H+2, W+2) row-major
+     * @param H          height
+     * @param W          width
+     * @param pixelSizeM physical size of one pixel in meters
+     * @return short array (H, W) with biome IDs
+     */
+    public static short[] classify(float[] elev, float[] climate, float[] riverFlux,
+                                    int i0, int j0, float[] elevPadded,
+                                    int H, int W, float pixelSizeM) {
         short[] out = new short[H * W];
         for (int i = 0; i < H * W; i++) out[i] = PLAINS;
 
@@ -155,6 +176,11 @@ public final class BiomeClassifier {
                 boolean isSteep = slope > 0.78f;
                 boolean hasSnow = snowTemp < 0f && precip > 150f && !isSteep;
 
+                // River classification: high flux + low slope + above sea level
+                float flux = (riverFlux != null) ? riverFlux[idx] : 0f;
+                float fluxThreshold = Math.max(50f, 200f / Math.max(1f, pixelSizeM / 7.7f));
+                boolean isRiver = flux > fluxThreshold && slope < 0.3f && elevVal >= 0f;
+
                 // Elevation/temp bands
                 boolean isOcean   = elevVal < 0f;
                 boolean mountains = altM > 2500f;
@@ -222,6 +248,11 @@ public final class BiomeClassifier {
                 // Bare slope override for lowland/non-mountain cliffs
                 if (slopeBare && !isOcean && !mountains) {
                     biome = hasSnow ? FROZEN_PEAKS : STONY_PEAKS;
+                }
+
+                // River override: place water in high-flux low-slope areas
+                if (isRiver) {
+                    biome = temp < -2f ? FROZEN_RIVER : RIVER;
                 }
 
                 out[idx] = biome;
