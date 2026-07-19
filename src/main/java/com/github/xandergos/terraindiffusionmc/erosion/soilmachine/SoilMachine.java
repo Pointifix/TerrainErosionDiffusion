@@ -1,9 +1,12 @@
 package com.github.xandergos.terraindiffusionmc.erosion.soilmachine;
 
 import java.io.File;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Random;
 import java.util.concurrent.ForkJoinPool;
+import javax.imageio.ImageIO;
 
 /**
  * Java port of weigert/SoilMachine — hydraulic erosion with multi-layer terrain.
@@ -171,11 +174,17 @@ public class SoilMachine {
 
     // ── Chunk Mode ──
 
+    private static final String[] IMAGE_TYPES = {"heightmap", "colormap", "normals", "frequency", "natural"};
+
     private static void runChunkMode(int seed, SoilParser.Config config, SoilType[] soils,
                                       int scale, int nWater, int iterations, boolean parallel, int threads,
                                       int chunkSize, int padding, ArrayList<int[]> chunks, File dir) {
         int expandedSize = chunkSize + 2 * padding;
         System.out.printf("Mode: %s%n", parallel ? "parallel" : "sequential");
+
+        // Store chunk images in memory for mosaic stitching
+        // Key: "type_cx_cy" → BufferedImage
+        HashMap<String, BufferedImage> chunkImages = new HashMap<>();
 
         long t0 = System.currentTimeMillis();
 
@@ -195,15 +204,79 @@ public class SoilMachine {
             // Run erosion on expanded canvas
             runErosion(map, soils, expandedSize, expandedSize, scale, nWater, seed, iterations, parallel, threads);
 
-            // Export only the inner core
+            // Export individual chunk images to disk
             String suffix = String.format("_%d_%d", cx, cy);
             exportAll(map, soils, scale, expandedSize, expandedSize, padding, padding, chunkSize, chunkSize, dir, suffix);
+
+            // Render images in memory for mosaic stitching
+            chunkImages.put("heightmap_" + cx + "_" + cy,
+                ImageExport.renderHeightmapRegion(map, scale, padding, padding, chunkSize, chunkSize));
+            chunkImages.put("colormap_" + cx + "_" + cy,
+                ImageExport.renderColorRegion(map, soils, padding, padding, chunkSize, chunkSize));
+            chunkImages.put("normals_" + cx + "_" + cy,
+                ImageExport.renderNormalsRegion(map, scale, padding, padding, chunkSize, chunkSize));
+            chunkImages.put("frequency_" + cx + "_" + cy,
+                ImageExport.renderFrequencyRegion(WaterParticle.frequency, expandedSize, padding, padding, chunkSize, chunkSize));
+            chunkImages.put("natural_" + cx + "_" + cy,
+                ImageExport.renderNaturalRegion(map, soils, WaterParticle.frequency, expandedSize, scale,
+                    padding, padding, chunkSize, chunkSize));
 
             System.out.printf("  Chunk (%d, %d) complete.%n", cx, cy);
         }
 
         long elapsed = System.currentTimeMillis() - t0;
         System.out.printf("%nAll %d chunks done in %.1f seconds%n", chunks.size(), elapsed / 1000.0);
+
+        // Stitch all chunks into mosaic images from in-memory renders
+        System.out.println("\nStitching mosaic...");
+        for (String type : IMAGE_TYPES) {
+            stitchMosaic(chunks, chunkSize, dir, type, chunkImages);
+        }
+        System.out.println("Mosaic complete.");
+    }
+
+    /** Stitch chunk images into a single large mosaic image. */
+    private static void stitchMosaic(ArrayList<int[]> chunks, int chunkSize, File dir,
+                                      String type, HashMap<String, BufferedImage> chunkImages) {
+        // Find grid bounds
+        int minCx = Integer.MAX_VALUE, maxCx = Integer.MIN_VALUE;
+        int minCy = Integer.MAX_VALUE, maxCy = Integer.MIN_VALUE;
+        for (int[] c : chunks) {
+            if (c[0] < minCx) minCx = c[0];
+            if (c[0] > maxCx) maxCx = c[0];
+            if (c[1] < minCy) minCy = c[1];
+            if (c[1] > maxCy) maxCy = c[1];
+        }
+
+        int gridW = maxCx - minCx + 1;
+        int gridH = maxCy - minCy + 1;
+        int mosaicW = gridW * chunkSize;
+        int mosaicH = gridH * chunkSize;
+
+        BufferedImage mosaic = new BufferedImage(mosaicW, mosaicH, BufferedImage.TYPE_INT_RGB);
+
+        int placed = 0;
+        for (int[] c : chunks) {
+            int cx = c[0], cy = c[1];
+            String key = type + "_" + cx + "_" + cy;
+            BufferedImage chunk = chunkImages.get(key);
+            if (chunk == null) continue;
+
+            int px = (cx - minCx) * chunkSize;
+            int py = (cy - minCy) * chunkSize;
+            mosaic.getRaster().setDataElements(px, py, chunk.getRaster());
+            placed++;
+        }
+
+        if (placed > 0) {
+            File out = new File(dir, type + "_mosaic.png");
+            try {
+                ImageIO.write(mosaic, "png", out);
+                System.out.printf("  %s: %dx%d (%d chunks)%n", type, mosaicW, mosaicH, placed);
+            } catch (Exception e) {
+                System.err.println("  Error writing " + out.getName() + ": " + e.getMessage());
+            }
+        }
     }
 
     // ── Shared Erosion Runner ──
