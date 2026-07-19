@@ -162,8 +162,23 @@ public class Layermap {
 
     // ── Initialization ──
 
-    /** Initialize from noise layers, matching Layermap::initialize in layermap.h. */
+    /** Initialize from noise layers, matching Layermap::initialize in layermap.h.
+     *  Noise coordinates = pixel index / grid dimension. */
     public void initialize(int seed, ArrayList<NoiseLayer> layers) {
+        initialize(seed, layers, 0, 0, dimX, dimY);
+    }
+
+    /** Initialize from noise layers with world offsets for chunk generation.
+     *  @param worldOffsetX  world-space X of pixel (0,0) in this canvas
+     *  @param worldOffsetY  world-space Y of pixel (0,0) in this canvas
+     *  @param refSizeX      reference X size for noise normalization (typically chunk core size)
+     *  @param refSizeY      reference Y size for noise normalization (typically chunk core size)
+     *
+     *  Noise coordinates = (worldOffset + pixelIndex) / refSize. This ensures adjacent chunks
+     *  sample the same noise values at their shared boundary because the same world position
+     *  always maps to the same noise coordinate regardless of which chunk it belongs to. */
+    public void initialize(int seed, ArrayList<NoiseLayer> layers,
+                           int worldOffsetX, int worldOffsetY, int refSizeX, int refSizeY) {
         pool.reset();
         for (int i = 0; i < dat.length; i++) dat[i] = null;
 
@@ -176,8 +191,8 @@ public class Layermap {
             for (int i = 0; i < dimX; i++) {
                 for (int j = 0; j < dimY; j++) {
                     double h = nl.get(
-                        (double) i / dimX,
-                        (double) j / dimY,
+                        (double) (worldOffsetX + i) / refSizeX,
+                        (double) (worldOffsetY + j) / refSizeY,
                         (z % maxSeed) / 1.0
                     );
                     add(i, j, pool.get(h, nl.soilType));
