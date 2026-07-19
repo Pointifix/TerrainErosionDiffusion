@@ -37,30 +37,32 @@ public class Layermap {
              +      wx  *      wy  * height(x0 + 1, y0 + 1);
     }
 
-    /** Surface normal at integer position. Height is scaled by SCALE to get proper slope. */
+    /** Surface normal at integer position. Height is scaled by SCALE to get proper slope.
+     *  Horizontal components point DOWNHILL (negative gradient) so that water particles
+     *  move in the direction of the normal and flow downhill naturally. */
     public double[] normal(int x, int y, int scale) {
         double nx = 0, ny = 0, nz = 0;
         int k = 0;
         double s = (double) scale;
 
         if (x > 0 && y > 0) {
-            nx += s * (-height(x - 1, y) + height(x, y));
-            nz += s * (-height(x, y - 1) + height(x, y));
+            nx += s * ( height(x - 1, y) - height(x, y));
+            nz += s * ( height(x, y - 1) - height(x, y));
             ny += 1.0; k++;
         }
         if (x > 0 && y < dimY - 1) {
-            nx += s * (-height(x - 1, y) + height(x, y));
-            nz += s * ( height(x, y + 1) - height(x, y));
+            nx += s * ( height(x - 1, y) - height(x, y));
+            nz += s * (-height(x, y + 1) + height(x, y));
             ny += 1.0; k++;
         }
         if (x < dimX - 1 && y > 0) {
-            nx += s * ( height(x + 1, y) - height(x, y));
-            nz += s * (-height(x, y - 1) + height(x, y));
+            nx += s * (-height(x + 1, y) + height(x, y));
+            nz += s * ( height(x, y - 1) - height(x, y));
             ny += 1.0; k++;
         }
         if (x < dimX - 1 && y < dimY - 1) {
-            nx += s * ( height(x + 1, y) - height(x, y));
-            nz += s * ( height(x, y + 1) - height(x, y));
+            nx += s * (-height(x + 1, y) + height(x, y));
+            nz += s * (-height(x, y + 1) + height(x, y));
             ny += 1.0; k++;
         }
 
@@ -76,6 +78,17 @@ public class Layermap {
     public int surface(int x, int y) {
         Sec top = top(x, y);
         return top == null ? 0 : top.type;
+    }
+
+    /** Water height (sum of type-0 layers) at position. */
+    public double waterHeight(int x, int y) {
+        double wh = 0;
+        Sec s = top(x, y);
+        while (s != null) {
+            if (s.type == 0) wh += s.size;
+            s = s.prev;
+        }
+        return wh;
     }
 
     /** Top Sec at position. */

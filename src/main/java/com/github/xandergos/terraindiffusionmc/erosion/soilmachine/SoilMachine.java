@@ -2,6 +2,7 @@ package com.github.xandergos.terraindiffusionmc.erosion.soilmachine;
 
 import java.io.File;
 import java.util.Random;
+import java.util.concurrent.ForkJoinPool;
 
 /**
  * Java port of weigert/SoilMachine — hydraulic erosion with multi-layer terrain.
@@ -10,27 +11,27 @@ import java.util.Random;
  *   java SoilMachine [options]
  *
  * Options:
- *   -SEED [#]     Run using seed. No seed = random
- *   -soil [file]  Specify relative path to .soil file
- *   -oc [file]    Export color map to .png at path (on exit)
- *   -oh [file]    Export height map to .png at path (on exit)
- *   -on [file]    Export normal map to .png at path (on exit)
- *   -of [file]    Export water frequency map to .png at path (on exit)
- *   -iter [#]     Number of erosion iterations (default: 500)
+ *   -SEED [#]       Run using seed. No seed = random
+ *   -soil [file]    Specify relative path to .soil file
+ *   -o [dir]        Output directory (default: ./output)
+ *   -iter [#]       Number of erosion iterations (default: 500)
+ *   -parallel       Use parallel erosion (snapshot+accumulate)
+ *   -threads [#]    Thread count for parallel mode (default: all cores)
+ *
+ * Always produces in output dir:
+ *   heightmap.png, colormap.png, normals.png, frequency.png, natural.png
  */
 public class SoilMachine {
 
     public static void main(String[] args) {
         System.out.println("SoilMachine Java Port");
 
-        // ── Parse Arguments ──
         Integer seed = null;
         String soilFile = "soil/default.soil";
-        String ocFile = null;  // output color
-        String ohFile = null;  // output height
-        String onFile = null;  // output normals
-        String ofFile = null;  // output frequency
+        String outputDir = "output";
         int iterations = 500;
+        boolean parallel = false;
+        int threads = Runtime.getRuntime().availableProcessors();
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -42,25 +43,19 @@ public class SoilMachine {
                 if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
                     soilFile = args[++i];
                 }
-            } else if (arg.equals("-oc")) {
+            } else if (arg.equals("-o")) {
                 if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                    ocFile = args[++i];
-                }
-            } else if (arg.equals("-oh")) {
-                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                    ohFile = args[++i];
-                }
-            } else if (arg.equals("-on")) {
-                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                    onFile = args[++i];
-                }
-            } else if (arg.equals("-of")) {
-                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                    ofFile = args[++i];
+                    outputDir = args[++i];
                 }
             } else if (arg.equals("-iter")) {
                 if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
                     iterations = Integer.parseInt(args[++i]);
+                }
+            } else if (arg.equals("-parallel")) {
+                parallel = true;
+            } else if (arg.equals("-threads")) {
+                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+                    threads = Integer.parseInt(args[++i]);
                 }
             } else if (arg.equals("-h") || arg.equals("--help")) {
                 printUsage();
@@ -95,54 +90,54 @@ public class SoilMachine {
         WaterParticle.initFrequency(sizeX, sizeY);
 
         // ── Run Erosion ──
-        Random rng = new Random(seed);
-        System.out.println("Running hydraulic erosion...");
+        System.out.printf("Mode: %s%n", parallel ? "parallel" : "sequential");
 
         long t0 = System.currentTimeMillis();
-        for (int iter = 0; iter < iterations; iter++) {
-            for (int i = 0; i < nWater; i++) {
-                WaterParticle particle = new WaterParticle(sizeX, sizeY, rng);
-                int spill = WaterParticle.SPILL;
-
-                while (true) {
-                    while (particle.move(map, soils, scale) && particle.interact(map, soils, scale)) {}
-                    if (!particle.flood(map, soils, scale, spill)) break;
-                    spill--;
-                    if (spill <= 0) break;
+        if (parallel) {
+            ForkJoinPool pool = new ForkJoinPool(threads);
+            ParallelHydraulicErosion parErosion = new ParallelHydraulicErosion(sizeX, sizeY, scale, soils);
+            parErosion.erode(map, iterations, nWater, seed, pool);
+            pool.shutdown();
+        } else {
+            WaterParticle.initFrequency(sizeX, sizeY);
+            Random rng = new Random(seed);
+            for (int iter = 0; iter < iterations; iter++) {
+                for (int i = 0; i < nWater; i++) {
+                    WaterParticle particle = new WaterParticle(sizeX, sizeY, rng);
+                    int spill = WaterParticle.SPILL;
+                    while (true) {
+                        while (particle.move(map, soils, scale) && particle.interact(map, soils, scale)) {}
+                        if (!particle.flood(map, soils, scale, spill)) break;
+                        spill--;
+                        if (spill <= 0) break;
+                    }
                 }
-            }
-
-            WaterParticle.globalSeep(map, soils, scale);
-            WaterParticle.mapFrequency(sizeX, sizeY);
-            WaterParticle.resetFrequency(sizeX, sizeY);
-
-            if ((iter + 1) % 100 == 0 || iter == 0) {
-                System.out.printf("  iteration %d/%d%n", iter + 1, iterations);
+                WaterParticle.globalSeep(map, soils, scale);
+                WaterParticle.mapFrequency(sizeX, sizeY);
+                WaterParticle.resetFrequency(sizeX, sizeY);
+                if ((iter + 1) % 100 == 0 || iter == 0) {
+                    System.out.printf("  iteration %d/%d%n", iter + 1, iterations);
+                }
             }
         }
         long elapsed = System.currentTimeMillis() - t0;
         System.out.printf("Done in %.1f seconds%n", elapsed / 1000.0);
 
-        // ── Export ──
+        // ── Export all images ──
+        File dir = new File(outputDir);
+        if (!dir.exists()) dir.mkdirs();
+
         try {
-            if (ocFile != null) {
-                ImageExport.exportColor(map, soils, new File(ocFile));
-            }
-            if (ohFile != null) {
-                ImageExport.exportHeightmap(map, scale, new File(ohFile));
-            }
-            if (onFile != null) {
-                ImageExport.exportNormals(map, scale, new File(onFile));
-            }
-            if (ofFile != null) {
-                ImageExport.exportFrequency(sizeX, sizeY, new File(ofFile));
-            }
+            ImageExport.exportHeightmap(map, scale, new File(dir, "heightmap.png"));
+            ImageExport.exportColor(map, soils, new File(dir, "colormap.png"));
+            ImageExport.exportNormals(map, scale, new File(dir, "normals.png"));
+            ImageExport.exportFrequency(sizeX, sizeY, new File(dir, "frequency.png"));
+            ImageExport.exportNatural(map, soils, WaterParticle.frequency, scale, new File(dir, "natural.png"));
         } catch (Exception e) {
             System.err.println("Export error: " + e.getMessage());
             e.printStackTrace();
         }
 
-        // Print pool usage
         System.out.printf("Memory pool usage: %.1f%%%n",
             100.0 * (1.0 - (double) map.pool.freeCount() / 10_000_000));
     }
@@ -153,13 +148,19 @@ public class SoilMachine {
         System.out.println("  java SoilMachine [options]");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  -SEED [#]     Run using seed. No seed = random");
-        System.out.println("  -soil [file]  Specify relative path to .soil file");
-        System.out.println("  -oc [file]    Export color map to .png at path");
-        System.out.println("  -oh [file]    Export height map to .png at path");
-        System.out.println("  -on [file]    Export normal map to .png at path");
-        System.out.println("  -of [file]    Export water frequency map to .png at path");
-        System.out.println("  -iter [#]     Number of erosion iterations (default: 500)");
-        System.out.println("  -h, --help    Show this help");
+        System.out.println("  -SEED [#]       Run using seed. No seed = random");
+        System.out.println("  -soil [file]    Specify relative path to .soil file");
+        System.out.println("  -o [dir]        Output directory (default: ./output)");
+        System.out.println("  -iter [#]       Number of erosion iterations (default: 500)");
+        System.out.println("  -parallel       Use parallel erosion (snapshot+accumulate)");
+        System.out.println("  -threads [#]    Thread count for parallel mode (default: all cores)");
+        System.out.println("  -h, --help      Show this help");
+        System.out.println();
+        System.out.println("Output files (always produced in output dir):");
+        System.out.println("  heightmap.png   Grayscale heightmap");
+        System.out.println("  colormap.png    Soil type color map");
+        System.out.println("  normals.png     Surface normal map");
+        System.out.println("  frequency.png   Water frequency map");
+        System.out.println("  natural.png     Combined natural rendering");
     }
 }
